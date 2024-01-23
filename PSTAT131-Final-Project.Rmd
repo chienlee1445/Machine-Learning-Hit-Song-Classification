@@ -1,0 +1,738 @@
+---
+title: "PSTAT131 Final Project Hit Song Predicting"
+subtitle: "Using Machine Learning Models to Predict the Hit Songs in Spotify"
+author: "Aaron Lee (3410388)"
+date: "2023-12-05"
+output: 
+  html_document:
+    toc: yes
+    theme: united
+    css: styles.css
+    df_print: paged
+    keep_md: true
+    fig_width: 7
+    fig_height: 6
+    fig_caption: true
+    toc_float: yes
+    code_folding: hide
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+![](image/Spotify.gif)
+
+In the dynamic landscape of the music industry, understanding the factors that contribute to the success of a song has long been a subject of fascination and study. The emergence of digital platforms and streaming services like Spotify has provided an unprecedented wealth of data that allows us to delve deeper into the intricacies of musical trends and audience preferences. This project aims to harness the power of machine learning to predict the likelihood of a track becoming a 'Hit' or a 'Flop,' leveraging a comprehensive dataset obtained through Spotify's Web API spanning the years 1960 to 2019. 
+
+The dataset, meticulously curated and labeled by the author, encapsulates a variety of features for each track, offering insights into elements such as tempo, danceability, instrumentalness, energy, and more. The binary classification of 'Hit' or 'Flop' provides a valuable ground truth for training a predictive model. It is crucial to note that the designation of 'Flop' in this context does not imply a qualitative judgment on the artistic merit of a track; rather, it serves as an indication of its perceived popularity in the mainstream.
+
+By employing machine learning techniques, we aim to uncover patterns and relationships within the data that can illuminate the key characteristics associated with successful music. Whether it be the infectious beats, lyrical content, or a combination of various features, the model will seek to discern the distinguishing factors that contribute to a song's commercial success. This predictive capability holds significant implications for artists, producers, and industry stakeholders, providing actionable insights to enhance decision-making processes and potentially improve the chances of crafting a hit song.
+
+As we embark on this exploration of music analytics, the project not only showcases the potential of machine learning in predicting musical success but also underscores the evolving intersection of technology and the arts. Through the lens of Spotify's vast music catalog, this endeavor aims to contribute to the ongoing dialogue surrounding the factors that resonate with audiences and drive the trajectory of a song to 'Hit' status in the ever-evolving realm of the music industry.
+
+In the context of this project, the dataset chosen for predicting the Model Hit Song is specifically derived from the decade spanning 2010 to 2019. This selection is informed by the notable and rapid transformations within the music industry in recent years, with the 2010s representing a pivotal epoch. The rationale behind opting for a dataset from this particular timeframe is rooted in the acknowledgment of the industry's evolution, ensuring that the predictive model aligns with contemporary public aesthetics. By focusing on the more recent musical landscape, the project endeavors to discern key factors instrumental in predicting a hit song in the contemporary milieu, thereby enhancing the model's relevance and efficacy in the current dynamic music industry landscape.
+
+
+## Loading Packages and Data
+
+To start off, we'll need to load all our packages and the raw data.
+
+```{r, message=FALSE, warning=FALSE}
+# Loading all necessary packages
+library(tidyverse)
+library(tidymodels)
+library(kknn)
+library(yardstick)
+library(tidymodels)
+library(ISLR)
+library(ISLR2)
+library(glmnet)
+library(modeldata)
+library(ggthemes)
+library(janitor)
+library(naniar)
+library(xgboost)
+library(ranger)
+library(vip)
+library(corrplot)
+library(janitor)
+library(ggplot2)
+library(forcats)
+library(kableExtra)
+theme_set(theme_bw())
+
+# Assigning the data to a variable
+spotify_10 <- read_csv("data/dataset-of-10s.csv")
+# tidymodels_prefer()
+set.seed(123)
+
+# Calling head() to see the first few rows
+head(spotify_10)
+```
+
+This data was taken from the Kaggle data set, “[The Spotify Hit Predictor Dataset (1960-2019)](https://www.kaggle.com/datasets/theoverman/the-spotify-hit-predictor-dataset/?select=LICENSE)”.
+
+## Exploring and Tidying the Raw Data
+
+Let's look in to our dataset.
+
+```{r}
+# Calling dim() to see how many rows and columns
+dim(spotify_10)
+```
+
+Through the function `dim()`, we can get how many rows and columns are there in the 2010s data set. As the result, we observed that there are 6398 rows (songs), and 19 columns (predictor variables), including variable `track`, `artist`, `uri`, `danceability`, `energy`, `key`, `loudness`, `mode`, `speechiness`, `acousticness`, `instrumentalness`, `liveness`, `valence`, `tempo`, `duration_ms`, `time_signature`, `chorus_hit`, `sections`, and `target`.
+
+Let's find out the number of artists in the dataset. 
+
+```{r}
+# Checking how many unique artist there are
+spotify_10 %>%
+  distinct(artist) %>%
+  count()
+```
+
+There are 3355 unique artists! The number of singers is over half of the number of songs. So, using the variable `artist` could be hard to predict whether the song is a hit song or not. Because roughly speaking, every artist only has 2 songs at most in this data set. The sample of each artist might be too small.
+
+Also, from looking at the data set, we can see that the variable `uri` represents the resource identifier for the track in Spotify. So, this variable is not helpful in predicting whether a song will be a hit.
+
+### Missing Data
+
+Before we proceed with tidying our data, let's make sure there isn't any missing data, as that could potentially lead to problems.
+
+```{r}
+# plot of missing values in the data
+vis_miss(spotify_10) ## 100%
+```
+
+Through the graph above, we can observe that including the data set of the 2010s, which the result is 100% present, which means that there are no missing data in the data sets.
+
+### Tidying Our Data
+
+Now, let us proceed to eliminate extraneous variables from the data set.
+
+```{r}
+# Tidying our dataset, turn into dataframe, as factor...
+# Selecting only the variables we want
+spotify_10 <- spotify_10 %>% 
+  select(c("track", "artist", "danceability",  "energy", "key", "loudness", "mode", "speechiness", "acousticness", "instrumentalness", "liveness", "valence", "tempo", "duration_ms", "time_signature", "chorus_hit", "sections", "target")) %>% 
+  clean_names()
+
+head(spotify_10)
+```
+
+Here we use the the `clean_names()` function, by using this function, the column name of the data set are likely to be transformed into lowercase, and the dots or space are replaced with underscores.`clean_names()` function is useful, because it makes the column names more standardized and easier to work with, especially when using the data in subsequent analyses or modeling. The consistent and clean naming convention can help avoid issues with case sensitivity and special characters, making it more convenient for data manipulation and analysis.
+
+
+Now, we convert any categorical variables to factors, and use the function `summary()` to take a look into our dataset.
+
+```{r}
+# Changing categorical variables to factors
+spotify_10$key <- as.factor(spotify_10$key)
+spotify_10$mode <- as.factor(spotify_10$mode)
+spotify_10$target <- as.factor(spotify_10$target)
+
+# Creating a final dataset csv
+write_csv(spotify_10, "data/spotify_10.csv")
+
+# Summarizing the data 
+spotify_10 %>% 
+  summary()
+```
+
+### Describing the Predictors
+
+Once we've removed unnecessary variables, let's take a look into the predictor variables, this can help us get a better understanding of the model and what each variable represents. The variables that I selected will be used in my model recipe to predict the hit song later.
+
+- `track`: The name of the track song.
+- `artist`: The name of the artist.
+- `danceability`: Danceability indicates how how suitable a track is for dancing, based on tempo, rhythm stability, beat strength, and overall regularity. The value between 0.0 to 1.0. (0.0 is least danceable and 1.0 is most danceable)
+- `energy`: Energy is a measure from 0.0 to 1.0 and represents a perceptual measure of intensity and activity.
+- `key`: The estimated overall key of the track.
+- `loudness`: The overall loudness of a track in decibels (dB).
+- `mode`: Mode indicates the modality (major or minor) of a track. (major is represented by 1 and minor is 0)
+- `speechiness`: Speechiness detects the presence of spoken words in a track. The more exclusively speech-like the recording, the closer to 1.0 the attribute value.
+- `acousticness`: A confidence measure from 0.0 to 1.0 of whether the track is acoustic. (1.0 represents high confidence the track is acoustic)
+- `instrumentalness`: Predicts whether a track contains no vocals.
+- `liveness`: Detects the presence of an audience in the recording. Higher liveness values represent an increased probability that the track was performed live.
+- `valence`: A measure from 0.0 to 1.0 describes the musical positiveness conveyed by a track.
+- `tempo`: The overall estimated tempo of a track in beats per minute (BPM).
+- `duration_ms`:  The duration of the track in milliseconds.
+- `time_signature`: An estimated overall time signature of a track.
+- `chorus_hit`: The timestamp of the start of the third section of the track.
+- `sections`: The number of sections the particular track has. This feature was extracted from the data received by the API call for Audio Analysis of that particular track.
+- `target`: The target variable for the track (either 0 or 1). 1 implies that this song has featured in the weekly list (Issued by Billboards) of Hot-100 tracks in that decade at least once and is therefore a 'hit'. 0 implies that the track is a 'flop'.
+
+![](image/billboard.jpeg){height=50%, width=50%}
+
+## Exploratory Data Analysis
+
+After understanding what each variable represents, it is time to explore the relationships between select variables. In the following part, we’ll create visualization plots to see the effect that certain variables of on our response variable.
+
+### Visual EDA
+
+Visual EDA is an important step in data analysis process as it facilitates a deeper and more intuitive understanding of the dataset, leading to better-informed decisions and insights.
+
+#### Hot Song Distribution (barplot)
+
+```{r}
+# using a barplot to show the distribution of the hit song, number of the hit song.
+# Barplot for Hit Song Distribution
+spotify_10 %>%
+  ggplot(aes(x = target, fill = factor(target))) +
+  geom_bar() +
+  labs(title = "Distribution of Hit and Flop Songs",
+       x = "Target (0: Flop, 1: Hit)",
+       y = "Count") +
+  theme_minimal()
+
+dplyr::count(spotify_10, target)
+```
+
+The barplot and table presented above depict an equitable distribution between hit songs and flop songs within this dataset. The total number of songs in the dataset is 3199.
+
+#### Variable Correlation
+
+Now, let’s visualize a correlation matrix of the numeric variables:
+
+```{r}
+# making a correlation matrix and heat map of the predictors
+spotify_10 %>%
+  select(where(is.numeric)) %>%
+  cor(use = "pairwise.complete.obs") %>%
+  corrplot(type = "lower", diag = FALSE)
+```
+
+Utilizing the correlation matrix, an analysis was conducted to discern the associations among selected predictor variables,, here we select all the numeric variable. In this matrix, the examination revealed pronounced negative correlations between the variables `acousticness` and `energy`, `loudness` and `acousticness`, as well as `loudness` and `instrumentalness` with correlation coefficients is close to -1. Conversely, conspicuous positive correlations were observed between `loudness` and `energy`, `sections` and `duration_ms`, and `danceability` and `valence`.
+
+Correlation ranges from -1 to 1. A correlation coefficient close to 1 indicates a strong positive correlation, meaning as one variable goes up, the other tends to go up as well. A correlation coefficient close to -1 suggests a strong negative correlation, indicating that as one variable goes up, the other tends to go down. A correlation coefficient around 0 means there's little to no linear relationship between the two variables.
+
+#### Boxplots for Key and Mode
+
+```{r}
+# more plots
+# Boxplots for Key and Mode
+spotify_10 %>%
+  mutate(across(c(key, mode), as.double)) %>%
+  gather(variable, value, key, mode) %>%
+  ggplot(aes(x = variable, y = value, fill = factor(target))) +
+  geom_boxplot() +
+  labs(title = "Boxplots for Key and Mode",
+       x = "Variable",
+       y = "Value",
+       fill = "Target") +
+  theme_minimal()
+```
+
+By examining the boxplot graph, it becomes apparent that the 'target' variable does not exhibit conspicuous variations with respect to the 'mode' variable in the outcomes. Additionally, regarding the 'key' variable, while the range remains relatively consistent, discernible differences exist in the means across various categories.
+
+#### Scatterplot Matrix
+
+Now, let's look into scatterplot matrix, scatterplot matrix is like a visual snapshot of relationships between multiple variables. For different aspects, predictor variables of data, if you want to understand how each pair of variables interacts with one another. Instead of looking at pairs individually, a scatterplot matrix could puts them all together in a grid of scatterplots. 
+
+In this context, the variables chosen for consideration encompass `danceability`, `energy`, `loudness`, `valence`, and `tempo`. The rationale behind this selection stems from a subjective evaluation grounded in personal musical experiences, wherein these elements are deemed influential in the creation of impactful songs and in eliciting excitement from listeners.
+
+```{r}
+# Scatterplot Matrix
+pairs(~danceability + energy + loudness + valence + tempo,
+      data = spotify_10,
+      main = "Scatterplot Matrix")
+```
+
+Through the percent stacked bar chart below, we can see the visual depiction of the relative composition and distribution of categorical variables within different groups or categories. The percentage is both about 62.5 percent of factor mode 1 and 37.5 percent of factor mode 0 in hit and flop songs.
+
+```{r}
+ggplot(spotify_10, aes(x = target, fill = factor(mode))) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "Percent Stacked Bar Chart of target by the mode of the song", 
+       x = "Target", 
+       y = "Percentage")
+```
+
+In the presented percent stacked bar chart, the depiction of key distribution within the dataset is evident. Approximately 14% of both hit and flop songs are identified with key 0; whereas nearly 25% of flop songs align with key 6. A comprehensive examination of the dataset reveals a comparatively diminished prevalence of key 3 in both hit and flop songs. Yet, overall, the distribution of every key in the dataset is almost equally distributed in both hit song and flop song categories.
+
+```{r}
+ggplot(spotify_10, aes(x = target, fill = factor(key))) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "Percent Stacked Bar Chart of target by the key of the song", 
+       x = "Target", 
+       y = "Percentage")
+```
+
+## Setting Up Models
+
+Now we have some idea about how the predictor variables affect whether the song is a hit song or not. The next step is setting and building up our own models. To build up our model, we need to do the following steps, including splitting our dataset into training set and testing set, creating recipe, establish cross-validation.
+
+### Train/Test Split
+
+In this step, we split our dataset into the training set and testing set. The training set will be used for the training of our models, and one will be the testing set (what we care about is the result of the testing set), which is saved till the end and used only once when we test our models. by separating the dataset, it enables the evaluation of a model's performance on new, unseen data, this helps identify whether a model has learned meaningful patterns or if it is overfitting to the training data, ensuring its reliability and generalization to real-world scenarios.
+
+```{r}
+# train and test data split, 0.8 probability
+# Set seed for reproducibility
+set.seed(123)
+
+# Splitting the data (80/20 split)
+spotify_split <- spotify_10 %>%
+  initial_split(strata = target, prop = 0.8)
+spotify_train <- training(spotify_split)
+spotify_test <- testing(spotify_split)
+```
+
+I selected the ratio of 0.8, as it affords a greater volume of data for training the model while concurrently preserving a sufficient dataset for testing, given the constrained quantity of observations available.
+
+```{r}
+dim(spotify_train)
+dim(spotify_test)
+```
+
+### Build Recipe
+
+Building a recipe enhances reproducibility, simplifies model deployment, and contributes to the overall efficiency and effectiveness of the machine-learning workflow. It serves the purpose of systematically transforming raw input data into a format suitable for model training. So now, we will create one universal recipe to use for all of our models.
+
+We will use the all 18 predictor variables in our dataset, because they all have the potential to predict whether the song is hit or flop. In the recipe, we use `step_dummy(all_nominal_predictors())` for all categorical predictors, including `key` and `mode`. By using the function `prep()`, we could view the result and apply the recipe to the dataset here.
+
+```{r}
+# Recipe
+# Set up the recipe
+spotify_recipe <- recipe(target ~ danceability + energy + key + loudness + mode + 
+                      speechiness + acousticness + instrumentalness + liveness +
+                      valence + tempo + duration_ms + time_signature + chorus_hit +
+                      sections, data = spotify_train) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_predictors())
+
+prep(spotify_recipe) %>% 
+  bake(new_data = spotify_train) %>%
+  head() %>%
+  kable() %>% 
+  kable_styling(full_width = F) %>% 
+  scroll_box(width = "100%", height = "200px")
+```
+
+### K-Fold Cross Validation
+
+The purpose of K fold cross-validation is to partition the dataset into K subsets and iteratively use each subset as both training and testing data, this technique provides a more robust evaluation, minimizing the impact of variability in a single split. It helps the model contribute to a more accurate estimation of overall model performance.
+
+In this case, we will create 10 folds to conduct k-fold (10-fold in our case) stratified cross validation.
+
+```{r}
+# K-fold
+# Create 10-fold cross-validation splits
+spotify_folds <- vfold_cv(spotify_train, v = 10, strata = target)
+```
+
+```{r}
+# save
+save(spotify_folds, spotify_recipe, spotify_train, spotify_test, file = "rda/spotify_mod_setup.rda")
+```
+
+## Building Prediction Model
+
+It is now opportune to build our models. The metric selected for evaluation is the Area under the Receiver Operating Characteristic curve (ROC AUC), chosen for its capability to serve as a comprehensive performance metric applicable across all models.
+
+The Area under the Receiver Operating Characteristic curve (ROC AUC) is a widely used metric in machine learning that assesses the performance of classification models. Essentially, it evaluates the ability of the model to rank true positives higher than false positives across various decision thresholds. A higher ROC AUC score, closer to 1, indicates better model performance, while a score around 0.5 suggests performance similar to random chance. In simpler terms, ROC AUC is like a report card for how good your model is at making accurate predictions.
+
+### Fitting Model
+
+Initially, we establish the model by specifying its type, configuring its engine, and setting its mode. In the context of our project objectives, the mode consistently remains 'classification.'
+
+Secondly, we set up the workflow for the model, add the new model, and add our established Spotify recipe.
+
+Then, we proceed to configure the tuning grid, outlining the parameters slated for tuning and defining the desired range for each parameter's tuning levels. For the logistic regression model, given its simplicity and lack of hyperparameters requiring tuning, we omit the parameter from the grid. The subsequent step involves the actual tuning of the models using the specified hyperparameters.
+
+To optimize efficiency, the tuning results are preserved in an RDA file to obviate the need for repeated time-consuming computations.
+
+Upon completion of the tuning process, the most accurate model is selected from the tuning grid, and the workflow is finalized with the incorporation of the chosen tuning parameters. This tuned model is then fitted to our training dataset.
+
+```{r}
+# Define the model specifications
+
+# k-nearest neighbor
+knn_spec <- nearest_neighbor(neighbors = tune()) %>%
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+# logistic regression
+logistic_model <- logistic_reg() %>%
+  set_engine("glm") %>%
+  set_mode("classification")
+
+# elastic net regression
+enet_spec_log <- logistic_reg(penalty = tune(), mixture = tune()) %>%
+  set_engine("glmnet") %>%
+  set_mode("classification")
+
+# random forest
+rf_class_spec <- rand_forest(mtry = tune(), 
+                           trees = tune(), 
+                           min_n = tune()) %>%
+  set_engine("ranger", importance = "impurity") %>% 
+  set_mode("classification")
+
+# boosted tree
+bt_class_spec <- boost_tree(mtry = tune(), 
+                           trees = tune(), 
+                           learn_rate = tune()) %>%
+  set_engine("xgboost") %>% 
+  set_mode("classification")
+```
+
+```{r}
+# Set up the workflows
+
+# k-nearest neighbor workflow
+workflow_knn <- workflow() %>%
+  add_recipe(spotify_recipe) %>%
+  add_model(knn_spec)
+
+# logistic regression workflow
+workflow_log <- workflow() %>%
+  add_recipe(spotify_recipe) %>%
+  add_model(logistic_model)
+
+# elastic net regression workflow
+workflow_enet <- workflow() %>%
+  add_recipe(spotify_recipe) %>%
+  add_model(enet_spec_log)
+
+# random forest workflow
+workflow_rf <- workflow() %>% 
+  add_recipe(spotify_recipe) %>%
+  add_model(rf_class_spec)
+
+# boosted tree workflow
+workflow_bt <- workflow() %>% 
+  add_recipe(spotify_recipe) %>%
+  add_model(bt_class_spec)
+```
+
+```{r}
+# Set up the parameter grids
+
+# knn grid
+param_grid_knn <- grid_regular(neighbors(range = c(1, 10)), levels = 10)
+
+# logistic regression
+# no grid because no tuning parameters
+
+# enet grid
+param_grid_enet <- grid_regular(penalty(range = c(0, 1), trans = identity_trans()), 
+                                mixture(range = c(0, 1)), levels = 10)
+
+# random forest grid
+rf_grid <- grid_regular(mtry(range = c(1, 6)), 
+                        trees(range = c(200, 600)),
+                        min_n(range = c(10, 20)),
+                        levels = 5)
+
+# boosted tree grid
+bt_grid <- grid_regular(mtry(range = c(1, 6)), 
+                        trees(range = c(200, 600)),
+                        learn_rate(range = c(-10, -1)),
+                        levels = 5)
+```
+
+```{r, eval=FALSE}
+# tuning parameter
+
+# knn tuning
+tune_knn <- tune_grid(
+  workflow_knn,
+  resamples = spotify_folds,
+  grid = param_grid_knn
+)
+
+# logistic regression
+# no tuning
+# boosted tree tuning
+tune_log <- tune_grid(
+  workflow_log,
+  resamples = spotify_folds,
+)
+
+# elastic net tuning
+tune_enet <- tune_grid(
+  workflow_enet,
+  resamples = spotify_folds,
+  grid = param_grid_enet
+)
+
+# random forest tuning
+tune_rf <- tune_grid(
+  workflow_rf,
+  resamples = spotify_folds,
+  grid = rf_grid
+)
+
+# boosted tree tuning
+tune_bt <- tune_grid(
+  workflow_bt,
+  resamples = spotify_folds,
+  grid = bt_grid
+)
+```
+
+![](image/coco.gif){height=150%}
+
+## Model Result
+
+In this section, we present the outcomes of the models, including K-nearest neighbor, elastic net regression, logistic regression, random forest, and boosted tree models. The results will be depicted through visualizations, illustrating the predictive estimates derived from each respective model. Here, we first load our saved model.
+
+```{r}
+# save(tune_knn, file = "tune_knn.rda")
+# save(tune_enet, file = "tune_enet.rda")
+# save(tune_bt, file = "tune_bt.rda")
+# save(tune_rf, file = "tune_rf.rda")
+
+# load
+load("rda/tune_knn.rda")
+load("rda/tune_enet.rda")
+load("rda/tune_rf.rda")
+load("rda/tune_bt.rda")
+```
+
+### K Nearest Neighbor
+
+#### Visualizing result
+
+Now we use `autoplot()` to visualize the results of the K nearest neighbor model. The ensuing graph portrays the fluctuations and impact on accuracy and the area under the Receiver Operating Characteristic (ROC) curve as a function of the incremental adjustment of the number of neighbors. Through the graph, we can see that the model with neighbor 10 have the highest roc_auc.
+
+```{r}
+autoplot(tune_knn) + theme_minimal()
+```
+
+The `show_best()` function in R is utilized to display the optimal parameter configuration for a K-nearest neighbor (KNN) model, specifically focusing on the metric of area under the Receiver Operating Characteristic (ROC) curve ("roc_auc"). In this part, we use `select_best()` function, it is employed to identify and select the optimal parameter configuration for a K-nearest neighbor (KNN) model from the results obtained through the tune_knn object. 
+
+After utilizing the `select_best()` function to identify the optimal parameter configuration for the K-nearest neighbor (KNN) model from the tuning process, the subsequent step involves finalizing the workflow. The best model we selected here, is the model with 10 neighbor, it matches the result above in the `autoplot`. This is achieved through the execution of `finalize_workflow()`. The finalized workflow, denoted as `final_knn_wf`, is then employed to fit the model to the training data, executed via `fit()`. This sequential process ensures the selection of the best-performing model configuration and its subsequent application to the training dataset for model training.
+
+```{r, warning=FALSE}
+# collect_metrics(tune_knn)
+show_best(tune_knn, metric = "roc_auc")
+# select_by_one_std_err(tune_knn, desc(neighbors), metric = "roc_auc")
+(best_knn <- select_best(tune_knn))
+final_knn_wf <- finalize_workflow(workflow_knn, best_knn)
+final_knn_fit <- fit(final_knn_wf, spotify_train)
+# final_knn_fit
+```
+
+Following the model fitting process, the subsequent step involves utilizing the `augment()` function on the `final_knn_fit` model. This function generates predictions on the original training data `spotify_train` and appends these predictions to the dataset. The KNN model performs really well in the training dataset, with 0.9833138 estimate, but we have to focus at the testing data.
+
+```{r}
+augment(final_knn_fit, new_data = spotify_train) %>%
+  roc_auc(target, .pred_0)
+```
+
+
+### Elastic net regression
+
+#### Visualizing result
+
+Same as above in the KNN model, we use `autoplot()` function to create a visual representation of the tuning process for an elastic net regression model. For the elastic net, we tuned the penalty and mixture at 10 different levels. We can see in the graph, that each line represents each proportion of the Lasso penalty. As the amount of regularization increases, most of the model performance becomes worse, including proportion 1, 0.67, 0.56, 0.44, and 0.33. The area under the Receiver Operating Characteristic (ROC) curve (roc_auc) experiences a pronounced decline as the degree of regularization increases. It is noteworthy that a higher area under the ROC curve is indicative of superior model performance.
+
+```{r, warning=FALSE}
+autoplot(tune_enet) + theme_minimal()
+```
+
+Here, I used `select_best()` function to identify and select the model configuration that yields the optimal performance. What we get the best model is the model with 0 penalty value and proportion mixture value of 0.7777778. The chosen configuration is stored in the `best_enet` object. To operationalize the selected configuration, the workflow is finalized through the `finalize_workflow()` function. To conclude the process, the finalized workflow is applied to the training data through the `fit()` function, resulting in the object `final_enet_fit`. This step completes the model training using the optimal elastic net configuration on the provided training dataset.
+
+```{r, warning=FALSE}
+# collect_metrics(tune_enet)
+show_best(tune_enet, metric = "roc_auc")
+# select_by_one_std_err(tune_enet,
+#                      metric = "roc_auc",
+#                      penalty,
+#                      mixture
+#                      )
+(best_enet <- select_best(tune_enet))
+final_enet_wf <- finalize_workflow(workflow_enet, best_enet)
+# final_enet_wf
+final_enet_fit <- fit(final_enet_wf, spotify_train)
+# final_enet_fit
+```
+
+The elastic net regression demonstrates satisfactory performance on the training dataset, yielding an estimated metric of 0.8687952. However, it falls short of the performance achieved by the K-nearest neighbor model. Nevertheless, the emphasis must be directed towards the evaluation of performance on the testing dataset.
+
+```{r}
+augment(final_enet_fit, new_data = spotify_train) %>%
+  roc_auc(target, .pred_0)
+```
+
+
+### Logistic Regression
+
+Due to the inherent simplicity of the logistic regression model, there is no necessity to finalize the workflow. The training data is directly fitted into the workflow we created in the fitting model step. Following this, we fit the training dataset `spotify_train` to train the logistic regression model using the specified workflow.
+
+```{r, warning=FALSE}
+final_log_fit <- fit(workflow_log, spotify_train)
+final_log_fit
+```
+
+The logistic regression model exhibits commendable performance on the training dataset, achieving an estimated metric of 0.8689414. While it demonstrates a marginal better over the elastic net regression model, it falls short of the performance observed in the K-nearest neighbor model.
+
+```{r}
+augment(final_log_fit, new_data = spotify_train) %>%
+  roc_auc(target, .pred_0)
+```
+
+### Random Forest
+
+Here, we use `autoplot` in random forest model. For the random forest, we tuned the minimal node size: `min_n`, the number of randomly selected predictors: `mtry`, and the number of trees: `trees`. For each line in the graph, they represent the number of the trees. 
+
+A quick introduction of random forest is that each tree in the forest is trained on a different subset of the data and makes its prediction. Then, the random forest combines these individual predictions to produce a more accurate and robust result. It's like asking multiple experts with different perspectives for their opinions and then making a collective decision. This approach helps reduce overfitting and enhances the model's ability to generalize well to new, unseen data.
+
+As depicted in the `autoplot()` visualization, there is an observable positive correlation between the number of randomly selected predictors and the resultant area under the Receiver Operating Characteristic (ROC) curve (roc_auc). The ROC_auc metric demonstrates a continuous increase as the count of randomly selected predictors rises, plateauing at approximately 0.91. This observation implies an enhanced model performance with an increase in the number of randomly selected predictors, emphasizing a positive relationship between predictor variability and model efficacy.
+
+```{r}
+autoplot(tune_rf) + theme_minimal()
+```
+
+The `select_best()` function is then applied to determine and store the optimal configuration for the random forest model based on the tuning results. In this specific case, we assigned to the `best_rf` object. In the result, we get the model with optimal settings including `mtry` = 6, `trees` = 500, and `min_n` = 15. Next, we finalized the workflow using `finalize_workflow() ` and fit the training data `spotify_10`, The resulting object `final_rf_fit` represents the trained random forest model with the optimal parameter configuration.
+
+```{r, warning=FALSE}
+# collect_metrics(tune_rf)
+show_best(tune_rf, metric = "roc_auc")
+(best_rf <- select_best(tune_rf))
+final_rf_wf <- finalize_workflow(workflow_rf, best_rf)
+final_rf_fit <- fit(final_rf_wf, spotify_train)
+```
+
+The random forest model demonstrates notable efficacy in this phase, attaining an estimated metric of 0.9974936 on the training dataset. This metric represents the highest observed performance among the previously estimated models, which is reasonable. The commendable performance of the random forest model can be attributed to its ensemble nature, which leverages the collective predictive power of multiple decision trees. By aggregating the predictions of diverse trees, the model tends to be robust, resistant to overfitting, and adept at capturing complex relationships within the data.
+
+```{r}
+augment(final_rf_fit, new_data = spotify_train) %>%
+  roc_auc(target, .pred_0)
+```
+
+
+### Boosted Tree
+
+For the boosted tree, we tuned the learning rate: `learn_rate`, the number of randomly selected predictors: `mtry`, and the number of trees: `trees`. For each line in the graph, they represent the number of the trees.
+
+A quick introduction of boosting process is that, each tree corrects the errors of the previous one, gradually refining the model's predictions. It's like a team of learners where each member focuses on getting better at what the others may have missed, resulting in a highly accurate and resilient model. The boosting technique enhances the model's ability to handle complex relationships and outliers, making it well-suited for various predictive tasks.
+
+In the graphical representation generated by `autoplot()`, it is evident that the model's performance is suboptimal when the learning rate (`learn_rate`) is set to -10, as indicated by the area under the Receiver Operating Characteristic (ROC) curve (roc_auc) ranging between 0.5 and 0.7. Conversely, alternative learning rate values yield significantly improved performance, with roc_auc values converging around 0.9. Furthermore, the analysis reveals a subtle but consistent enhancement in roc_auc as the count of randomly selected predictors increases.
+
+```{r}
+autoplot(tune_bt) + theme_minimal()
+```
+
+The `select_best()` function is applied to determine the optimal configuration for the boosted tree model, and it identifies that the best model is characterized by the hyperparameter values `mtry=4`, `trees=200`, and `learn_rate=0.1`. These specific parameter settings have been determined through the tuning process to yield the highest area under the Receiver Operating Characteristic (ROC) curve (ROC_auc), signifying the optimal setup for the boosted tree model within the given context.
+
+```{r, warning=FALSE}
+# collect_metrics(tune_bt)
+show_best(tune_bt, metric = "roc_auc")
+(best_bt <- select_best(tune_bt))
+final_bt_wf <- finalize_workflow(workflow_bt, best_bt)
+final_bt_fit <- fit(final_bt_wf, spotify_train)
+```
+
+The performance evaluation of the boosted tree model on the training dataset yields a commendable estimate of 0.9933447. In comparison to the random forest model, however, the latter demonstrates a slightly superior performance. Which is also reasonable because, the preference for the random forest model may be attributed to the boosted tree's sequential learning nature, where each subsequent tree corrects the errors of the previous ones. While boosting enhances the model's adaptability, the random forest's ensemble approach, which combines predictions from multiple trees in parallel, may offer more robust generalization capabilities, contributing to its slight advantage in this particular context.
+
+```{r}
+augment(final_bt_fit, new_data = spotify_train) %>%
+  roc_auc(target, .pred_0)
+```
+
+
+### Fitting Testing Data
+
+Now, it’s time to test our models to see how it performs on data that it has not been trained on at all: the testing data set.
+
+#### K nearest neighbor
+
+```{r}
+augment(final_knn_fit, new_data = spotify_test) %>%
+  roc_auc(target, .pred_0)
+```
+
+#### Elastic net regression
+
+```{r}
+augment(final_enet_fit, new_data = spotify_test) %>%
+  roc_auc(target, .pred_0)
+```
+
+#### Logistic regression
+
+```{r}
+augment(final_log_fit, new_data = spotify_test) %>%
+  roc_auc(target, .pred_0)
+```
+
+#### Boosted Tree
+
+```{r}
+augment(final_bt_fit, new_data = spotify_test) %>%
+  roc_auc(target, .pred_0)
+```
+
+#### Random Forest
+
+```{r}
+augment(final_rf_fit, new_data = spotify_test) %>%
+  roc_auc(target, .pred_0)
+```
+
+When we tested all the models using the testing dataset, the random forest model and boosted tree model turned out to be the best performer, which is 0.9179956, and 0.918186 respectively. Here, I chose random forest as the final model, because it is less sensitive to hyperparameter tuning, can handle noisy data and outliers more robustly, and training multiple trees in parallel can be computationally efficient. It achieved the 2nd highest estimate among all the models, slightly lower than the boosted tree. This consistency makes sense and gives us confidence in the random forest model's reliability. Now, let look deeper into the random forest model.
+
+```{r}
+final_rf_model_test <- augment(final_rf_fit, 
+                               spotify_test)
+
+roc_curve(final_rf_model_test, truth = target, .pred_0) %>% 
+  autoplot()
+```
+
+To illustrate the AUC score, we will generate a Receiver Operating Characteristic (ROC) curve. The optimal ROC curve is positioned higher up and to the left, indicating superior model performance. The visual representation above, while not perfectly square, exhibits a curvature in the appropriate direction, affirming the previously calculated AUC score.
+
+#### Confusion Matrix
+
+The confusion matrix presented below reveals a preponderance of true positives and true negatives, indicating a substantial degree of correct classifications. Nevertheless, instances of misclassifications are evident. Notably, the frequency of errors is more pronounced when the true class is 0 compared to instances where the true class is 1. This observation suggests a potential inclination of the model towards predicting the negative class (0).
+
+```{r}
+conf_mat(final_rf_model_test, truth = target, .pred_class) %>% 
+  autoplot(type = "heatmap")
+```
+
+### Variable Importance
+
+Next, we are showing the variable importance plot.
+
+```{r}
+final_rf_fit %>% extract_fit_parsnip() %>% 
+  vip() +
+  theme_minimal()
+```
+
+From the analysis, it becomes apparent that the variable influencing outcome prediction is `instrumentalness`. This finding is somewhat surprising for me, as the conventional belief posited danceability and energy as paramount elements for crafting a hit song. However, it is reasonable, that the presence or absence of vocals emerges as a significant determinant, underscoring the indispensability of vocal components in the creation of hit songs.
+
+## Conclusion
+
+In the evaluation of various predictive models, it is observed that the Random Forest model outperforms others in the training dataset, while the Boosted Tree model demonstrates superior performance in the testing dataset. The marginal difference in prediction estimates between the two top-performing models in the testing dataset, with Boosted Tree at 0.918186 and Random Forest at 0.9179956, indicates a relatively close match.
+
+The unexpected performance of the K Nearest Neighbor model, which ranks poorly in the testing dataset despite its competitive standing in the training data, underscores the significance of robust testing data partitioning. This underscores the importance of assessing model performance on unseen data to ensure generalizability.
+
+Surprisingly, all models achieve estimates above 0.8, signifying notable predictive capabilities. This positive performance across models suggests a promising potential for predicting the success of songs based on selected features.
+
+Moving forward, the next steps involve incorporating more recent songs into the dataset and engaging with stakeholders in the music industry, including new singers and music producers. The aim is to provide insights into the key elements that contribute to a hit song and offer guidance on avoiding pitfalls that may lead to a less successful outcome. Continuous model refinement with updated data is imperative, considering the dynamic nature of the music industry, to ensure accurate identification of evolving patterns and trends associated with popular and hit songs.
+
+Furthermore, I've already thought of a further research topic. By extending the project to predict the evolving trends in the music industry represents a compelling and forward-looking avenue. By analyzing the dataset spanning 1960 to 2020, we can unravel temporal patterns in musical preferences and identify shifts in the significance of key variables over time. This exploration aims to uncover not only the past but also potential trajectories for the future, offering insights into emerging trends and the next wave of 'pop' that resonates with audiences.
+
+![](image/beatles.jpeg)
+
+## Source
+
+This data was taken from the Kaggle data set, [The Spotify Hit Predictor Dataset (1960-2019)](https://www.kaggle.com/datasets/theoverman/the-spotify-hit-predictor-dataset/?select=LICENSE).
+
+The author and the script of the data set: [Content](https://github.com/fortytwo102/the-spotify-hit-predictor-dataset)
+
+The idea of hit song prediction is from: [Medium](https://medium.com/nerd-for-tech/predicting-the-next-hit-song-f7c697f48647)
+
